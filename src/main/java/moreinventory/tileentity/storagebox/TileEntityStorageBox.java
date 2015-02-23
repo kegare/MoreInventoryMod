@@ -261,16 +261,22 @@ public class TileEntityStorageBox extends TileEntity implements IInventory, ISto
 		{
 			sendPacket();
 
-            MIMBoxList list = this.getStorageBoxNetworkManager().getListFromID("Teleporter");
-            if(list != null){
-                for(int idx = list.getListSize();0<idx--;){
-                    TileEntity tile = list.getTileBeyondDim(idx);
-                    if(tile == null) continue;
-                    if(!(tile instanceof IStorageBoxNet)) continue;
+			MIMBoxList list = getStorageBoxNetworkManager().getListFromID("Teleporter");
 
-                    ((TileEntityTeleporter) tile).setNetworkChanged();
-                }
-            }
+			if (list != null)
+			{
+				for (int i = list.getListSize(); 0 < i--;)
+				{
+					TileEntity tile = list.getTileBeyondDim(i);
+
+					if(tile == null || !(tile instanceof IStorageBoxNet))
+					{
+						continue;
+					}
+
+					((TileEntityTeleporter)tile).setNetworkChanged();
+				}
+			}
 		}
 
 		super.markDirty();
@@ -312,7 +318,7 @@ public class TileEntityStorageBox extends TileEntity implements IInventory, ISto
 
 		if (result && itemstack.hasTagCompound() && checkNBT)
 		{
-			for (int i = 0; i < getSizeInventory(); i++)
+			for (int i = 0; i < getSizeInventory(); ++i)
 			{
 				ItemStack item = getStackInSlot(i);
 

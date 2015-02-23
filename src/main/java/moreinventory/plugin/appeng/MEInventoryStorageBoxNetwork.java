@@ -13,198 +13,234 @@ import moreinventory.util.MIMItemBoxList;
 import moreinventory.util.MIMUtils;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
-import net.minecraft.world.ChunkPosition;
 
-import java.util.Arrays;
+public class MEInventoryStorageBoxNetwork implements IMEInventory<IAEItemStack>
+{
+	protected final TileEntitySBAddonBase storage;
 
-/**
- * Created by Furia on 15/01/30.
- */
-public class MEInventoryStorageBoxNetwork implements IMEInventory<IAEItemStack> {
-    protected final TileEntitySBAddonBase storage;
+	public MEInventoryStorageBoxNetwork(TileEntitySBAddonBase tile)
+	{
+		this.storage = tile;
+	}
 
-    public MEInventoryStorageBoxNetwork(TileEntitySBAddonBase tile)
-    {
-        this.storage = tile;
-    }
+	@Override
+	public IAEItemStack injectItems(IAEItemStack input, Actionable type, BaseActionSource src)
+	{
+		if (input == null || input.getStackSize() == 0L)
+		{
+			return null;
+		}
 
-    @Override
-    public IAEItemStack injectItems(IAEItemStack input, Actionable type, BaseActionSource src)
-    {
-        //挿入後の余剰を返す
+		TileEntityStorageBox storage = getStorageBox(input.getItemStack());
 
-        if (input == null)
-            return null;
-        if (input.getStackSize() == 0L)
-            return null;
+		if (storage == null)
+		{
+			return input;
+		}
 
-        TileEntityStorageBox storage = getStorageBox(input.getItemStack());
-        if(storage == null) return input;
+		ItemStack template = storage.getContents();
 
-        ItemStack template = storage.getContents();
-        if(template == null)
-            return input;
+		if (template == null || !input.isSameType(template))
+		{
+			return input;
+		}
 
-        if(!input.isSameType(template))
-            return input;
+		int storedCount = storage.getContentItemCount();
+		int maxStacksCount = storage.getUsableInventorySize();
+		int maxOneStackSize = template.getMaxStackSize();
+		int maxStorableCount;
 
-        int storedCount = storage.getContentItemCount();
+		if (storage.getTypeName().equals("Ender"))
+		{
+			maxStorableCount = Integer.MAX_VALUE;
+		}
+		else
+		{
+			maxStorableCount = maxStacksCount * maxOneStackSize;
+		}
 
-        int maxStacksCount = storage.getUsableInventorySize();
-        int maxOneStackSize = template.getMaxStackSize();
+		int remainingFreeCount = maxStorableCount - storedCount;
 
-        int maxStorableCount;
-        if(storage.getTypeName().equals("Ender")){
-            maxStorableCount = Integer.MAX_VALUE;
-        }else{
-            maxStorableCount = maxStacksCount * maxOneStackSize;
-        }
+		if(remainingFreeCount <= 0)
+		{
+			return input;
+		}
 
-        int remainingFreeCount = maxStorableCount - storedCount;
+		IAEItemStack result = input.copy();
 
-        if(remainingFreeCount <= 0)
-            return input;
+		result.setStackSize(Math.max(0,input.getStackSize() - remainingFreeCount));
 
-        IAEItemStack result = input.copy();
+		boolean isModulate = type == Actionable.MODULATE;
 
-        result.setStackSize(Math.max(0,input.getStackSize() - remainingFreeCount));
+		if (isModulate)
+		{
+			long remainingInjectCount = input.getStackSize() - result.getStackSize();
 
-        boolean isModulate = type == Actionable.MODULATE;
-        if(isModulate){
-            long remainingInjectCount = input.getStackSize() - result.getStackSize();
-            do{
-                ItemStack tmp = input.getItemStack().copy();
+			do
+			{
+				ItemStack tmp = input.getItemStack().copy();
+				int workCount = (int)Math.min(tmp.getMaxStackSize(),remainingInjectCount);
+				tmp.stackSize = workCount;
 
-                int workCount = (int)Math.min(tmp.getMaxStackSize(),remainingInjectCount);
-                tmp.stackSize = workCount;
+				storage.tryPutIn(tmp);
 
-                storage.tryPutIn(tmp);
+				if (0 < tmp.stackSize)
+				{
+					result.setStackSize(Math.min(input.getStackSize() , result.getStackSize() + tmp.stackSize));
+					break;
+				}
+				else
+				{
+					remainingInjectCount -= workCount;
+				}
+			}
+			while (0 < remainingInjectCount);
+		}
 
-                if(0 < tmp.stackSize){
-                    result.setStackSize(Math.min(input.getStackSize() , result.getStackSize() + tmp.stackSize));
-                    break;
-                }else{
-                    remainingInjectCount -= workCount;
-                }
-            }while(0 < remainingInjectCount);
-        }
+		if (result.getStackSize() == 0)
+		{
+			result = null;
+		}
 
-        if(result.getStackSize() == 0)
-            result = null;
+		this.storage.markDirty();
+		this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
+		this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord, this.storage.getBlockType());
 
-        this.storage.markDirty();
-        this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
-        this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord, this.storage.getBlockType());
-        return result;
-    }
+		return result;
+	}
 
-    @Override
-    public IAEItemStack extractItems(IAEItemStack request, Actionable type, BaseActionSource src)
-    {
-        //排出可能分を返す
+	@Override
+	public IAEItemStack extractItems(IAEItemStack request, Actionable type, BaseActionSource src)
+	{
+		if (request == null)
+		{
+			return null;
+		}
 
-        if(request == null) return null;
+		ItemStack requestStack = request.getItemStack();
+		TileEntityStorageBox storage = getStorageBox(requestStack);
 
-        ItemStack requestStack = request.getItemStack();
+		if(storage == null)
+		{
+			return null;
+		}
 
-        TileEntityStorageBox storage = getStorageBox(requestStack);
-        if(storage == null) return null;
+		if (storage.getFirstItemIndex() < 0)
+		{
+			return null;
+		}
 
-        int firstSlotIdx = storage.getFirstItemIndex();
-        if(firstSlotIdx < 0)
-            return null;
+		ItemStack template = storage.getContents();
 
-        ItemStack template = storage.getContents();
-        if(template == null)
-            return null;
-        if(!(MIMUtils.compareStacksWithDamage(requestStack,template) && ItemStack.areItemStackTagsEqual(requestStack,template)))
-            return null;
+		if (template == null || !(MIMUtils.compareStacksWithDamage(requestStack,template) && ItemStack.areItemStackTagsEqual(requestStack,template)))
+		{
+			return null;
+		}
 
+		int storedCount = storage.getContentItemCount();
 
-        int storedCount = storage.getContentItemCount();
-        if(storedCount == 0)
-            return null;
+		if (storedCount == 0)
+		{
+			return null;
+		}
 
-        long extractCount = Math.min(storedCount, requestStack.stackSize);
+		long extractCount = Math.min(storedCount, requestStack.stackSize);
+		IAEItemStack result = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
 
-        IAEItemStack result = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
-        result.setStackSize(extractCount);
+		result.setStackSize(extractCount);
 
-        boolean isModulate = type == Actionable.MODULATE;
-        if(isModulate){
-            long remainingExtractCount = extractCount;
-            do{
-                ItemStack extract = storage.loadItemStack((int)Math.min(template.getMaxStackSize(),remainingExtractCount));
-                remainingExtractCount -= extract.stackSize;
-            }while(0 < remainingExtractCount);
-        }
+		boolean isModulate = type == Actionable.MODULATE;
 
-        this.storage.markDirty();
-        this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
-        this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord,this.storage.yCoord,this.storage.zCoord,this.storage.getBlockType());
+		if (isModulate)
+		{
+			long remainingExtractCount = extractCount;
 
-        return result;
-    }
+			do
+			{
+				ItemStack extract = storage.loadItemStack((int)Math.min(template.getMaxStackSize(),remainingExtractCount));
 
-    private TileEntityStorageBox getStorageBox(ItemStack itemstack)
-    {
+				remainingExtractCount -= extract.stackSize;
+			}
+			while (0 < remainingExtractCount);
+		}
 
-        MIMItemBoxList list = storage.getStorageBoxNetworkManager().getBoxList();
+		this.storage.markDirty();
+		this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
+		this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord, this.storage.getBlockType());
 
-        if(list == null) return null;
+		return result;
+	}
 
-        for (int i = 0; i < list.getListSize(); i++)
-        {
-            if(MIMUtils.compareStacksWithDamage(itemstack, list.getItem(i)) && ItemStack.areItemStackTagsEqual(itemstack, list.getItem(i))){
-                TileEntity tile = list.getTileBeyondDim(i);
-                if(tile == null) continue;
-                if(!(tile instanceof TileEntityStorageBox)) continue;
+	private TileEntityStorageBox getStorageBox(ItemStack itemstack)
+	{
+		MIMItemBoxList list = storage.getStorageBoxNetworkManager().getBoxList();
 
-                return (TileEntityStorageBox)tile;
-            }
-        }
+		if (list != null)
+		{
+			for (int i = 0; i < list.getListSize(); ++i)
+			{
+				if (MIMUtils.compareStacksWithDamage(itemstack, list.getItem(i)) && ItemStack.areItemStackTagsEqual(itemstack, list.getItem(i)))
+				{
+					TileEntity tile = list.getTileBeyondDim(i);
 
-        return null;
-    }
+					if(tile == null || !(tile instanceof TileEntityStorageBox))
+					{
+						continue;
+					}
 
-    @Override
-    public IItemList<IAEItemStack> getAvailableItems(IItemList<IAEItemStack> out)
-    {
+					return (TileEntityStorageBox)tile;
+				}
+			}
+		}
 
-        MIMItemBoxList list = storage.getStorageBoxNetworkManager().getBoxList();
+		return null;
+	}
 
-        if(list == null) return out;
+	@Override
+	public IItemList<IAEItemStack> getAvailableItems(IItemList<IAEItemStack> out)
+	{
+		MIMItemBoxList list = storage.getStorageBoxNetworkManager().getBoxList();
 
-        for (int i = list.getListSize(); 0 < i--;)
-        {
-            ItemStack stack = list.getItem(i);
+		if (list != null)
+		{
+			for (int i = list.getListSize(); 0 < i--;)
+			{
+				ItemStack stack = list.getItem(i);
 
-            if(stack == null) continue;
+				if(stack == null)
+				{
+					continue;
+				}
 
+				int[] pullPos = list.getBoxPos(i);
+				TileEntity tile = storage.getWorldObj().getTileEntity(pullPos[0], pullPos[1], pullPos[2]);
 
-            int[] pullPos = list.getBoxPos(i);
-            TileEntity tile = storage.getWorldObj().getTileEntity(pullPos[0], pullPos[1], pullPos[2]);
+				if(tile == null || !(tile instanceof TileEntityStorageBox))
+				{
+					continue;
+				}
 
-            if(tile == null) continue;
-            if(!(tile instanceof TileEntityStorageBox)) continue;
+				TileEntityStorageBox currentBox = (TileEntityStorageBox)tile;
+				int allCount = currentBox.getContentItemCount();
 
-            TileEntityStorageBox currentBox = (TileEntityStorageBox)tile;
+				if(allCount <= 0)
+				{
+					continue;
+				}
 
-            int allCount = currentBox.getContentItemCount();
+				IAEItemStack stored = AEApi.instance().storage().createItemStack(currentBox.getStackInSlot(currentBox.getFirstItemIndex()));
 
-            if(allCount <= 0) continue;
+				stored.setStackSize(allCount);
+				out.add(stored);
+			}
+		}
 
-            IAEItemStack stored = AEApi.instance().storage().createItemStack(currentBox.getStackInSlot(currentBox.getFirstItemIndex()));
-            stored.setStackSize(allCount);
-            out.add(stored);
-        }
+		return out;
+	}
 
-        return out;
-    }
-
-    @Override
-    public StorageChannel getChannel()
-    {
-        return StorageChannel.ITEMS;
-    }
+	@Override
+	public StorageChannel getChannel()
+	{
+		return StorageChannel.ITEMS;
+	}
 }

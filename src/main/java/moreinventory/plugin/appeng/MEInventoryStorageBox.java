@@ -23,129 +23,159 @@ public class MEInventoryStorageBox implements IMEInventory<IAEItemStack>
 	@Override
 	public IAEItemStack injectItems(IAEItemStack input, Actionable type, BaseActionSource src)
 	{
-        //挿入後の余剰を返す
+		if (input == null || input.getStackSize() == 0L)
+		{
+			return null;
+		}
 
-        if (input == null)
-            return null;
-        if (input.getStackSize() == 0L)
-            return null;
+		ItemStack template = storage.getContents();
 
-        ItemStack template = storage.getContents();
-        if(template == null)
-            return input;
+		if (template == null || !input.isSameType(template))
+		{
+			return input;
+		}
 
-        if(!input.isSameType(template))
-            return input;
+		int storedCount = storage.getContentItemCount();
+		int maxStacksCount = storage.getUsableInventorySize();
+		int maxOneStackSize = template.getMaxStackSize();
+		int maxStorableCount;
 
-        int storedCount = storage.getContentItemCount();
+		if (storage.getTypeName().equals("Ender"))
+		{
+			maxStorableCount = Integer.MAX_VALUE;
+		}
+		else
+		{
+			maxStorableCount = maxStacksCount * maxOneStackSize;
+		}
 
-        int maxStacksCount = storage.getUsableInventorySize();
-        int maxOneStackSize = template.getMaxStackSize();
+		int remainingFreeCount = maxStorableCount - storedCount;
 
-        int maxStorableCount;
-        if(storage.getTypeName().equals("Ender")){
-            maxStorableCount = Integer.MAX_VALUE;
-        }else{
-            maxStorableCount = maxStacksCount * maxOneStackSize;
-        }
+		if (remainingFreeCount <= 0)
+		{
+			return input;
+		}
 
-        int remainingFreeCount = maxStorableCount - storedCount;
+		IAEItemStack result = input.copy();
 
-        if(remainingFreeCount <= 0)
-            return input;
+		result.setStackSize(Math.max(0, input.getStackSize() - remainingFreeCount));
 
-        IAEItemStack result = input.copy();
+		boolean isModulate = type == Actionable.MODULATE;
 
-        result.setStackSize(Math.max(0, input.getStackSize() - remainingFreeCount));
+		if (isModulate)
+		{
+			long remainingInjectCount = input.getStackSize() - result.getStackSize();
 
-        boolean isModulate = type == Actionable.MODULATE;
-        if(isModulate){
-            long remainingInjectCount = input.getStackSize() - result.getStackSize();
-            do{
-                ItemStack tmp = input.getItemStack().copy();
+			do
+			{
+				ItemStack tmp = input.getItemStack().copy();
+				int workCount = (int)Math.min(tmp.getMaxStackSize(),remainingInjectCount);
+				tmp.stackSize = workCount;
 
-                int workCount = (int)Math.min(tmp.getMaxStackSize(),remainingInjectCount);
-                tmp.stackSize = workCount;
+				storage.tryPutIn(tmp);
 
-                storage.tryPutIn(tmp);
+				if (0 < tmp.stackSize)
+				{
+					result.setStackSize(Math.min(input.getStackSize() , result.getStackSize() + tmp.stackSize));
+					break;
+				}
+				else
+				{
+					remainingInjectCount -= workCount;
+				}
+			}
+			while (0 < remainingInjectCount);
+		}
 
-                if(0 < tmp.stackSize){
-                    result.setStackSize(Math.min(input.getStackSize() , result.getStackSize() + tmp.stackSize));
-                    break;
-                }else{
-                    remainingInjectCount -= workCount;
-                }
-            }while(0 < remainingInjectCount);
-        } 
-        if(result.getStackSize() == 0)
-            result = null;
+		if (result.getStackSize() == 0)
+		{
+			result = null;
+		}
 
-        this.storage.markDirty();
-        this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
-        this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord,this.storage.yCoord,this.storage.zCoord,this.storage.getBlockType());
-        return result;
+		storage.markDirty();
+		storage.getWorldObj().markBlockForUpdate(storage.xCoord, storage.yCoord, storage.zCoord);
+		storage.getWorldObj().notifyBlockChange(storage.xCoord, storage.yCoord, storage.zCoord, storage.getBlockType());
+
+		return result;
 	}
 
 	@Override
 	public IAEItemStack extractItems(IAEItemStack request, Actionable type, BaseActionSource src)
 	{
-        //排出可能分を返す
+		if (request == null)
+		{
+			return null;
+		}
 
-        if(request == null) return null;
+		ItemStack requestStack = request.getItemStack();
 
-        ItemStack requestStack = request.getItemStack();
+		if (storage.getFirstItemIndex() < 0)
+		{
+			return null;
+		}
 
-        int firstSlotIdx = storage.getFirstItemIndex();
-        if(firstSlotIdx < 0)
-            return null;
+		ItemStack template = storage.getContents();
 
-        ItemStack template = storage.getContents();
-        if(template == null)
-            return null;
-        if(!(MIMUtils.compareStacksWithDamage(requestStack, template) && ItemStack.areItemStackTagsEqual(requestStack,template)))
-            return null;
+		if(template == null || !(MIMUtils.compareStacksWithDamage(requestStack, template) && ItemStack.areItemStackTagsEqual(requestStack,template)))
+		{
+			return null;
+		}
 
+		int storedCount = storage.getContentItemCount();
 
-        int storedCount = storage.getContentItemCount();
-        if(storedCount == 0)
-            return null;
+		if(storedCount == 0)
+		{
+			return null;
+		}
 
-        long extractCount = Math.min(storedCount, requestStack.stackSize);
+		long extractCount = Math.min(storedCount, requestStack.stackSize);
+		IAEItemStack result = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
 
-        IAEItemStack result = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
-        result.setStackSize(extractCount);
+		result.setStackSize(extractCount);
 
-        boolean isModulate = type == Actionable.MODULATE;
-        if(isModulate){
-            long remainingExtractCount = extractCount;
-            do{
-                ItemStack extract = storage.loadItemStack((int)Math.min(template.getMaxStackSize(),remainingExtractCount));
-                remainingExtractCount -= extract.stackSize;
-            }while(0 < remainingExtractCount);
-        }
+		boolean isModulate = type == Actionable.MODULATE;
 
-        this.storage.markDirty();
-        this.storage.getWorldObj().markBlockForUpdate(this.storage.xCoord, this.storage.yCoord, this.storage.zCoord);
-        this.storage.getWorldObj().notifyBlockChange(this.storage.xCoord,this.storage.yCoord,this.storage.zCoord,this.storage.getBlockType());
-        return result;
+		if(isModulate)
+		{
+			long remainingExtractCount = extractCount;
+
+			do
+			{
+				ItemStack extract = storage.loadItemStack((int)Math.min(template.getMaxStackSize(),remainingExtractCount));
+
+				remainingExtractCount -= extract.stackSize;
+			}
+			while(0 < remainingExtractCount);
+		}
+
+		storage.markDirty();
+		storage.getWorldObj().markBlockForUpdate(storage.xCoord, storage.yCoord, storage.zCoord);
+		storage.getWorldObj().notifyBlockChange(storage.xCoord, storage.yCoord, storage.zCoord, storage.getBlockType());
+
+		return result;
 	}
 
 	@Override
 	public IItemList<IAEItemStack> getAvailableItems(IItemList<IAEItemStack> out)
 	{
-        if(storage.getContents() == null)
-            return out;
+		if (storage.getContents() == null)
+		{
+			return out;
+		}
 
-        int allCount = storage.getContentItemCount();
+		int allCount = storage.getContentItemCount();
 
-        if(allCount <= 0)
-            return out;
+		if(allCount <= 0)
+		{
+			return out;
+		}
 
-        IAEItemStack stored = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
-        stored.setStackSize(allCount);
-        out.add(stored);
+		IAEItemStack stored = AEApi.instance().storage().createItemStack(storage.getStackInSlot(storage.getFirstItemIndex()));
 
-        return out;
+		stored.setStackSize(allCount);
+		out.add(stored);
+
+		return out;
 	}
 
 	@Override
